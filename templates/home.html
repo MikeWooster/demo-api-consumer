@@ -1,14 +1,26 @@
 {% extends "base.html" %}
 
 {% block content %}
+  <h2>Applications</h2>
   <ul>
     {% for application in unconnected_applications %}
       <li><a href="{% url 'connect' application.id %}">Connect to {{ application.application_name }}</a></li>
     {% endfor %}
-
-    {% for application in api_endpoints %}
-      <li><a href="{% url 'disconnect' application.id %}">Disconnect from {{ application.name }}</a></li>
-      <li>{{ application.application_balance }}</li>
-    {% endfor %}
   </ul>
+  <h2>Connected Applications</h2>
+    {% for application in api_endpoints %}
+      <h3>{{ application.name }}</h3>
+      <h5>Accounts</h5>
+      <pre>{{ application.account_info.accounts }}</pre>
+      <h5>Account Products</h5>
+      {% for product in application.account_info.products %}
+        <pre>{{ product }}</pre>
+      {% endfor %}
+      <h5>Account Balances</h5>
+      {% for balance in application.account_info.balances %}
+        <pre>{{ balance }}</pre>
+      {% endfor %}
+      <a href="{% url 'disconnect' application.id %}"><i>Disconnect</i></a>
+    {% endfor %}
+
 {% endblock %}

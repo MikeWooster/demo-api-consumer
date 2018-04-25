@@ -1,3 +1,5 @@
+import json
+
 from django.http import HttpResponseRedirect
 from django.views.generic import TemplateView, DetailView
 from django.urls import reverse
@@ -5,6 +7,67 @@ import requests
 from urllib.parse import urlencode
 
 from applications.models import Application, Token
+
+
+def pretty_print_json(json_data):
+    return json.dumps(json_data, indent=4, sort_keys=True)
+
+
+class AccountInfo:
+    def __init__(self, bearer_token, base_url):
+        self.bearer_token = bearer_token
+        self.base_url = base_url
+
+        self._headers = None
+        self._accounts = None
+
+    @property
+    def headers(self):
+        if self._headers is None:
+            self._headers = {
+                'Authorization': f'Bearer {self.bearer_token}'
+            }
+        return self._headers
+
+    def get_accounts(self):
+        return pretty_print_json(self.accounts)
+
+    @property
+    def accounts(self):
+        if self._accounts is None:
+            accounts_url = f"{self.base_url}accounts/"
+            response = requests.get(accounts_url, headers=self.headers)
+            account_data = self._get_data_from_response(response)
+            self._accounts = account_data['Account']
+        return self._accounts
+
+    def get_balance_for_accounts(self):
+        balances = []
+        for account in self.accounts:
+            account_id = account['AccountId']
+            balance_url = f"{self.base_url}accounts/{account_id}/balances/"
+            response = requests.get(balance_url, headers=self.headers)
+            balance_data = self._get_data_from_response(response)
+            balances.append(
+                pretty_print_json(balance_data['Balance'])
+            )
+        return balances
+
+    def get_products_for_accounts(self):
+        products = []
+        for account in self.accounts:
+            account_id = account['AccountId']
+            product_url = f"{self.base_url}accounts/{account_id}/product/"
+            response = requests.get(product_url, headers=self.headers)
+            product_data = self._get_data_from_response(response)
+            products.append(
+                pretty_print_json(product_data['Product'])
+            )
+        return products
+
+    def _get_data_from_response(self, response):
+        content = response.json()
+        return content['Data']
 
 
 class HomeView(TemplateView):
@@ -21,10 +84,8 @@ class HomeView(TemplateView):
             context['api_endpoints'].append({
                 'id':  app.id,
                 'name': app.application_name,
-                'application_balance': self._get_balance_for_application(app),
+                'account_info': self._build_account_info_for_application(app),
             })
-        print(context['api_endpoints'])
-        # context['connected_applications'] = connected_applications
         context['unconnected_applications'] = unconnected_applications
         return context
 
@@ -35,19 +96,18 @@ class HomeView(TemplateView):
             applications.append(token.application)
         return applications
 
-    def _get_balance_for_application(self, app):
-        """Get the balance for the application.
+    def _build_account_info_for_application(self, app):
+        """Build a list of accounts with their product information and balance.
         """
         base_url = app.base_api_url
-        accounts_url = f'{base_url}accounts/'
-
         bearer_token = self._get_bearer_token(app)
-        headers = {
-            'Authorization': f'Bearer {bearer_token}'
+        account_info = AccountInfo(bearer_token, base_url)
+
+        return {
+            'accounts': account_info.get_accounts(),
+            'balances': account_info.get_balance_for_accounts(),
+            'products': account_info.get_products_for_accounts(),
         }
-        print(headers)
-        response = requests.get(accounts_url, headers=headers)
-        return response.json()
 
     def _get_bearer_token(self, app):
         token = Token.objects.get(
@@ -73,6 +133,7 @@ class ConnectView(DetailView):
         }
 
         url = self.object.authorize_url + '?' + urlencode(params)
+        print(f"Redirecting to authorize: {url}")
         return HttpResponseRedirect(url)
 
 
@@ -93,13 +154,15 @@ class GetTokenView(DetailView):
             'client_id': self.object.client_id,
             'redirect_uri': redirect_uri,
             'scope': 'balances products accounts',
+            'client_secret': self.object.client_secret,
         }
+        print(f"Getting user token at: {self.object.token_url} with data: {post_data}")
         response = requests.post(
             self.object.token_url,
             data=post_data,
         )
         response_json = response.json()
-        print(response_json)
+        print(f"Got response from token endpoint: {response} with data: {response_json}")
         access_token = response_json['access_token']
         refresh_token = response_json['refresh_token']
 
@@ -124,10 +187,12 @@ class DisconnectView(DetailView):
             'client_id': self.object.client_id,
             'client_secret': self.object.client_secret,
         }
+        print(f"Disconnecting user at: {self.object.revoke_url} with data: {post_data}")
         response = requests.post(
             self.object.revoke_url,
             data=post_data,
         )
+        print(f"Got response from revoke endpoint: {response}")
         if response.status_code == 200:
             token.delete()
         return HttpResponseRedirect(reverse('home'))
